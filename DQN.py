@@ -106,7 +106,7 @@ def get_screen():
     # (this doesn't require a copy)
     screen = np.ascontiguousarray(screen, dtype=np.float32) / 255
     screen = torch.from_numpy(screen)
-    
+
     # Resize, and add a batch dimension (BCHW)
     return resize(screen).unsqueeze(0)
 
@@ -180,9 +180,7 @@ def plot_durations():
         plt.plot(means.numpy())
 
     plt.pause(0.001)  # pause a bit so that plots are updated
-    if is_ipython:
-        display.clear_output(wait=True)
-        display.display(plt.gcf())
+
 # %%
 
 
@@ -235,7 +233,7 @@ def optimize_model():
 
 
 # %%
-num_episodes = 50
+num_episodes = 1
 for i_episode in range(num_episodes):
     # Initialize the environment and state
     env.reset()
@@ -266,17 +264,13 @@ for i_episode in range(num_episodes):
         optimize_model()
         if done:
             episode_durations.append(t + 1)
-            plot_durations()
+            # plot_durations()
             break
     # Update the target network, copying all weights and biases in DQN
     if i_episode % TARGET_UPDATE == 0:
         target_net.load_state_dict(policy_net.state_dict())
 
 print('Complete')
-env.render()
-env.close()
-plt.ioff()
-plt.show()
 # %%
 
 env.reset()

@@ -1,133 +1,71 @@
 # %%
-from warnings import formatwarning
+from agent import DQNAgent
 import gym
 import math
-import random
 import numpy as np
-import matplotlib
 import matplotlib.pyplot as plt
-from collections import namedtuple, deque
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
-from torch.tensor import Tensor
-from torch.types import Number
-import torchvision.transforms as T
-from PIL import Image
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+from skimage.transform import resize
+import wandb
+from net import ConvNet, Net
 
 
-class Net(nn.Module):
-    def __init__(self, w, h, action_n):
-        super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(1, 16, 5, 2)
-        self.bn1 = nn.BatchNorm2d(16)
-        self.conv2 = nn.Conv2d(16, 32, 5, 2)
-        self.bn2 = nn.BatchNorm2d(32)
-
-        def conv2d_size_out(size, kernel_size=5, stride=2):
-            return (size - (kernel_size - 1) - 1) // stride + 1
-        convw = conv2d_size_out(conv2d_size_out(w))
-        convh = conv2d_size_out(conv2d_size_out(h))
-        linear_input_size = convw * convh * 32
-        self.head = nn.Linear(linear_input_size, action_n)
-
-    def forward(self, x: Tensor):
-        x = x.to(device)
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        return self.head(x.view(x.size(0), -1))
+HEIGHT = 50
+WIDTH = 50
+env = gym.make('CartPole-v1')
+wandb.init(project="CartPole-v1")
+# env.reset()
+# agent = Agent(50, 50, env.action_space.n)
+# plt.imshow(agent.get_screen(env))
+# plt.show()
 
 
-Transition = namedtuple('Transition',
-                        ('state', 'action', 'next_state', 'reward'))
+def get_screen_state(env):
+    global last_screen
+    screen = env.render(mode='rgb_array')
+    screen = np.asarray(screen, dtype=np.float32) / 255
+    screen = resize(screen, (HEIGHT, WIDTH))
+    current_screen = screen.transpose(2, 0, 1)
+
+    if(last_screen is None):
+        last_screen = current_screen
+
+    state = current_screen - last_screen
+    last_screen = current_screen
+    return state
 
 
-class Memory(object):
-    def __init__(self, capacity: int):
-        # when new items are added, a corresponding number
-        # of items are discarded from the opposite end.
-        self.memory = deque([], maxlen=capacity)
-
-    def add(self, state: list, action: list, next_state: list, reward: list):
-        self.memory.append(Transition(state, action, next_state, reward))
-
-    def sample(self, batch_size: int):
-        total = len(self.memory)
-        transitions = []
-        if(total < batch_size):
-            divide = math.floor(batch_size / total)
-            residue = batch_size % total
-            residue_transitions = random.sample(self.memory, residue)
-            for i in range(divide):
-                transitions += random.sample(self.memory, total)
-            transitions += residue_transitions
-        else:
-            transitions = random.sample(self.memory, batch_size)
-        batch = Transition(*zip(*transitions))
-        return batch
-
-    def __len__(self):
-        return len(self.memory)
-
-
-class Agent(object):
-    def __init__(self, w, h, n_actions):
-        self.n_actions = n_actions
-        self.step_count = 0
-        self.eps_start = 0.9
-        self.eps_end = 0.05
-        self.eps_decay = 200
-        self.eval_net = Net(w, h, n_actions).to(device)
-        self.target_net = Net(w, h, n_actions).to(device)
-        self.memory = Memory(1000)
-
-    def choose_action(self, state: np.ndarray):
-        eps_threshold = self.eps_end + (self.eps_start - self.eps_end) * \
-            math.exp(-1. * self.step_count / self.eps_decay)
-        self.step_count += 1
-
-        if random.random() < eps_threshold:
-            x = torch.unsqueeze(torch.from_numpy(state), 0)
-            q_values = self.eval_net.forward(x)
-            action = torch.max(q_values, 1)[1].data.numpy()
-        else:
-            action = np.random.randint(0, self.n_actions)
-        return action
-
-
-resize = T.Compose([T.ToPILImage(),
-                    T.Resize(40, interpolation=Image.CUBIC),
-                    T.ToTensor()])
-
-
-def get_screen(env):
-    # Returned screen requested by gym is 400x600x3, but is sometimes larger
-    # such as 800x1200x3. Transpose it into torch order (CHW).
-    screen = env.render(mode='rgb_array').transpose((2, 0, 1))
-    screen = np.ascontiguousarray(screen, dtype=np.float32) / 255
-    screen = torch.from_numpy(screen)
-
-    # Resize, and add a batch dimension (BCHW)
-    return resize(screen).numpy()
-
-
-env = gym.make('CartPole-v0')
-num_episodes = 20
-for i_episode in range(num_episodes):
+num_epochs = 3000
+# agent = DQNAgent(ConvNet, (WIDTH, HEIGHT, env.action_space.n), env.action_space.n)
+agent = DQNAgent(Net, (4, env.action_space.n), env.action_space.n)
+for i_epoch in range(num_epochs):
     state = env.reset()
-    state = np.expand_dims(np.asarray(state), axis=0)
-    state = np.expand_dims(state, axis=0)
-    print(state)
-    agent = Agent(1, 4, env.action_space.n)
-    for t in range(1000):
+    last_screen = None
+    # state = get_state(env)
+    loss_list = []
+    total_reward = 0
+
+    for i_step in range(1000):
         env.render()
         action = agent.choose_action(state)
-        state, reward, done, _ = env.step(action)
-        print(reward)
+        next_state, reward, done, _ = env.step(action)
+        x, x_dot, theta, theta_dot = next_state
+        r1 = (env.x_threshold - abs(x)) / env.x_threshold - 0.8
+        r2 = (env.theta_threshold_radians - abs(theta)) / env.theta_threshold_radians - 0.5
+        reward = r1 + r2
+        agent.memory.add(state, action, next_state, reward, done)
+
+        loss = agent.learn()
+        if loss is not None:
+            loss_list.append(loss)
+        state = next_state
+        total_reward += reward
+
         if done:
-            print("Episode finished after {} timesteps".format(t+1))
+            loss_avg = math.nan if len(loss_list) == 0 else np.mean(np.asarray(loss_list))
+            wandb.log({'reward': total_reward, 'loss': loss_avg, 'eps': agent.eps})
+            print("Epoch {} reward:{} loss:{} eps:{}"
+                  .format(i_epoch, total_reward, format(loss_avg, '.3f'), format(agent.eps, '.2f')))
             break
 env.close()
+
+# %%
