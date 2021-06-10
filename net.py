@@ -32,12 +32,24 @@ class ConvNet(nn.Module):
 class Net(nn.Module):
     def __init__(self, state_n, action_n):
         super(Net, self).__init__()
-        self.l1 = nn.Linear(state_n, 32)
-        self.l2 = nn.Linear(32, 64)
-        self.l3 = nn.Linear(64, action_n)
+        self.l1 = nn.Linear(state_n, 64)
+        self.l2 = nn.Linear(64, 128)
+        self.l3 = nn.Linear(128, action_n)
 
     def forward(self, x):
         x = F.relu(self.l1(x))
         x = F.relu(self.l2(x))
-        x = F.relu(self.l3(x))
+        x = self.l3(x)
         return x
+
+
+class QNet(nn.Module):  # nn.Module is a standard network in PyTorch
+    def __init__(self, mid_dim, state_dim, action_dim):
+        super().__init__()
+        self.net = nn.Sequential(nn.Linear(state_dim, mid_dim), nn.ReLU(),
+                                 nn.Linear(mid_dim, mid_dim), nn.ReLU(),
+                                 nn.Linear(mid_dim, mid_dim), nn.ReLU(),
+                                 nn.Linear(mid_dim, action_dim))
+
+    def forward(self, state):
+        return self.net(state)  # Q value
